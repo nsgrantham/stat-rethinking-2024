@@ -1,0 +1,12 @@
+jupyter: julia-1.9
+
+format:
+  neat-pdf:
+    highlight-style: github
+    fig-width: 6
+    fig-height: 3
+
+mainfont: Inter
+monofont: CommitMono
+fontsize: 10pt
+
