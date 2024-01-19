@@ -37,7 +37,25 @@ Assume that age influences weight through two paths:
 Draw the DAG that represents these causal relationships.
 And then write a generative simulation that takes age as an input and simulates height and weight, obeying the relationships in the DAG.
 
-![](dag.png){width=50%}
+```{julia}
+#| echo: false
+
+using TikzPictures
+
+tikz = L"""
+\node (a) at (0,0) {$A$};
+\node (h) at (1,1) {$H$};
+\node (w) at (2,0) {$W$};
+\path
+    (a) edge (h)
+    (a) edge (w)
+    (h) edge (w);
+"""
+tp = TikzPicture(tikz, options=">=stealth,every path/.append style={arrows=->}")
+save(SVG("dag.svg"), tp)
+```
+
+![](./dag.svg){width=50%}
 
 ```{julia}
 function generate_child(; α=0, β=0, γ=0)
