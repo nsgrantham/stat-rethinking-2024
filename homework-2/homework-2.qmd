@@ -1,0 +1,155 @@
+---
+title: Statistical Rethinking 2024, Week 2
+author: Neal Grantham
+date: 2024-01-19
+---
+
+```{julia}
+# Julia v1.9.3
+using StatsBase
+using StatsPlots
+using Distributions
+using Turing
+using CSV
+using DataFrames
+```
+
+```{julia}
+#| echo: false
+import Random
+Random.seed!(777)  # for reproducibility
+
+import Logging
+Logging.disable_logging(Logging.Warn)  # hide "Sampling" messages from Turing
+
+# Plot defaults
+default(c=:grey70, bar_width=0.5, guidefontfamily="Inter-Regular", guidefontsize=9, legend=false)
+```
+
+Q1.
+From the `Howell1` dataset, consider only the people younger than 13 years old.
+Estimate the causal association between age and weight.
+Assume that age influences weight through two paths:
+
+1. age influences height and height influences weight, and
+2. age directly influences weight through age-related changes in muscle growth and body proportions.
+
+Draw the DAG that represents these causal relationships.
+And then write a generative simulation that takes age as an input and simulates height and weight, obeying the relationships in the DAG.
+
+![](dag.png){width=50%}
+
+```{julia}
+function generate_child(; α=0, β=0, γ=0)
+    a = sample(0:12)
+    h = 50 + 5 * a + rand(Normal(0, 2))  # 50 cm at birth + 5 cm / year + var.
+    w = α + β * a + γ * h + rand(Normal(0, 2))
+    (age=a, height=h, weight=w)
+end
+
+sim_params = Dict(:α => 3.3, :β => 2.0, :γ => 0.0)
+sim_children = DataFrame(generate_child(; sim_params...) for _ in 1:150)
+
+scatter(
+    sim_children.age, sim_children.weight,
+    xticks=0:12, ylims=(0, 40),
+    ylab="weight (kg)", xlab="age"
+)
+```
+
+Q2. Estimate the total causal effect of each year of growth on weight.
+
+We define the following `child_growth` model, where `a` is a child's age in years (0 to 12) and `w` is a child's weight in kilograms.
+
+```{julia}
+@model function child_growth(a, w)
+    α ~ Normal(4, 1)
+    β ~ LogNormal(0, 0.5)
+    σ ~ Exponential(0.5)
+    for i in eachindex(w)
+        μ = α + β * a[i]
+        w[i] ~ Normal(μ, σ)
+    end
+    w
+end;
+```
+
+How does the model perform on the simulated data?
+
+```{julia}
+sim_model = child_growth(sim_children.age, sim_children.weight)
+sim_chain = sample(sim_model, NUTS(), 5000)
+
+density(sim_chain[:β], ylab="posterior density", xlab="β")
+vline!([sim_params[:β]], linestyle=:dash)
+```
+
+The model successfully recovered the simulated value of $\beta$.
+
+Now we fit the model to Howell's Dobe !Kung census data.
+
+```{julia}
+url = "https://raw.githubusercontent.com/rmcelreath/rethinking/master/data/Howell1.csv"
+howell = CSV.read(download(url), DataFrame; delim=';')
+
+children = howell[howell.age .< 13, :]
+
+scatter(
+    children.age, children.weight, 
+    xticks=0:12, ylims=(0, 40),
+    xlab="age", ylab="weight (kg)"
+)
+```
+
+```{julia}
+model = child_growth(children.age, children.weight)
+chain = sample(model, NUTS(), 5000)
+
+density(chain[:β], ylab="posterior density", xlab="β")
+```
+
+We estimate the total causal effect of age on weight for children under 13 years of age to be between 1.2 and 1.6 kilograms per year.
+
+Q3. The data in `Oxboys` are growth records for 26 boys measured over 9 periods.
+I want you to model their growth. Specifically, model the increments in growth from one period (`Occasion` in the data table) to the next.
+Each increment is simply the difference between height in one occasion and height in the previous occasion.
+Since none of these boys shrunk during the study, all of the growth increments are greater than zero.
+Estimate the posterior distribution of these increments.
+Constrain the distribution so it is always positive — it should not be possible for the model to think that boys can shrink from year to year.
+Finally compute the posterior distribution of the total growth over all 9 occasions.
+
+```{julia}
+url = "https://raw.githubusercontent.com/rmcelreath/rethinking/master/data/Oxboys.csv"
+oxboys = CSV.read(download(url), DataFrame; delim=';')
+
+oxboys = combine(groupby(oxboys, :Subject), :height => diff => :diff);
+
+density(oxboys.diff, ylab="density", xlab="growth increment (cm)")
+```
+
+We define the following `oxboy_growth` model, where `d` is a boy's height increment (in cm) between two periods.
+
+```{julia}
+@model function oxboy_growth(d)
+    σ ~ Exponential(0.2)
+    μ ~ Normal(0, 0.2)
+    for i in eachindex(d)
+        d[i] ~ LogNormal(μ, σ)
+    end
+    d
+end
+
+model = oxboy_growth(oxboys.diff)
+chain = sample(model, MH(), 5000)
+```
+
+```{julia}
+post = zip(chain[:μ], chain[:σ])
+pred_post = rand.(LogNormal(μ, σ) for (μ, σ) in post)
+density(pred_post, ylab="posterior density", xlab="growth increment (cm)")
+```
+
+```{julia}
+pred_post = [sum(rand(LogNormal(μ, σ), 8)) for (μ, σ) in post]
+density(pred_post, ylab="posterior density", xlab="total growth (cm)")
+```
